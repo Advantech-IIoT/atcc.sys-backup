@@ -97,8 +97,8 @@ function do_clean {
         echo "[no Backup backup tools exist] "  
     fi
 	if [ ! -z ${SIGN_IMAGE} ]; then
-		[ -f $PRIV_KEY_FILE ] && rm -rf $PRIV_KEY_FILE && echo "$PRIV_KEY_FILE"
-	    [ -f $CERT_FILE ] && rm -rf $CERT_FILE &&  echo $CERT_FILE
+		[ -f $PRIV_KEY_FILE ] && rm -rf $PRIV_KEY_FILE && echo "remove $PRIV_KEY_FILE"
+	    [ -f $CERT_FILE ] && rm -rf $CERT_FILE &&  echo "remove $CERT_FILE"
 		echo "[Backup delete backup keys ]"
 	fi
 	sync
@@ -159,28 +159,26 @@ function create_new_keys_and_cert() {
     backup_genkey
     openssl req -new -utf8 -sha256 -days 36500 -batch -x509 -config "${DEF_CERT_FILE_PATH}/${DEF_X509_CONFIG}" -outform PEM -out  "${CERT_FILE}" -keyout "${PRIV_KEY_FILE}"  -passout pass:${PASSPHRASE}
     rm -rf "${DEF_CERT_FILE_PATH}/${DEF_X509_CONFIG}"
-    update_cert  add       
+    update_cert  add ${CERT_FILE}      
 }
 
-function update_cert() {
-    
-    if [ "$1" = "remove" ]; then
-        
+function update_cert() {    
+    CERT=$1
+    if [ "$2" = "remove" ]; then        
         find "/etc/ssl/certs" -type l -exec bash -c '
             for symlink; do
             if [ "$(readlink -f "${symlink}")" = "$0" ]; then
                 rm "${ABS_EXT4_OUT_DIR}/${symlink}"                
             fi
             done
-        ' "${CERT_FILE}" {} +
+        ' "${CERT}" {} +
 
-        #[ -f ${CERT_FILE} ] && rm -rf ${CERT_FILE}
-    
+        [ -f ${CERT} ] && rm -rf ${CERT}    
     fi
 
-    if [ "$1" = "add" ]; then
-        if [ ! -f ${CERT_FILE} ]; then
-            echo_red "${CERT_FILE} not exist !!!!!"
+    if [ "$2" = "add" ]; then
+        if [ ! -f ${CERT} ]; then
+            echo_red "${CERT} not exist !!!!!"
         fi
     
     fi
@@ -209,7 +207,7 @@ function import_exist_cert() {
     else
         rm -rf ${CERT_FILE}
         cp -rf "$1" "${CERT_FILE}"
-        update_cert add     
+        update_cert add     ${CERT_FILE}
     fi    
 }
 
@@ -243,7 +241,7 @@ function change_pw(){
         echo_red "update certificate failed!!!!!!!!! please re-create key and certificate again "
         exit 1
     else
-        update_cert add 
+        update_cert add ${CERT_FILE}
         echo "update certificate done"
     fi
 
@@ -251,7 +249,7 @@ function change_pw(){
     
 }
 
-function verify_RSA_key() {
+function verify_RSA_key_with_pw() {
 
     # private key has be encrypted , check password then ask user for check password?
     if openssl rsa -in "$PRIV_KEY_FILE" -check -passin pass:"$PASSPHRASE" -noout 2>/dev/null; then
@@ -336,10 +334,52 @@ function format_usb_device() {
         fi
         
 
+verify_with_module() {
+    #$1 : private key .
+    #$2 : certificate   
+    key_modulus=$(openssl rsa -in "$1" -noout -modulus | sed 's/Modulus=//')
+    cert_modulus=$(openssl x509 -in "$2" -noout -modulus | sed 's/Modulus=//')
 
-
+    if [[ "$cert_modulus" == "$key_modulus" ]]; then
+        return 0
+    else
+        echo "The certificate and private key do NOT match (modulus differs)."
+        exit 1
+    fi
 }
 
+verify_with_pubkey() {
+    #$1 : private key .
+    #$2 : certificate 
+   
+    openssl rsa -in $1 -pubout -noout > ${DEF_SIGN_FILE_PATH}/private_public.key  
+    SHA256_PRIV_KEY=$(sha256sum ${DEF_SIGN_FILE_PATH}/private_public.key | awk '{print $1}')
+
+    openssl x509 -in $1 -pubkey -noout > ${DEF_SIGN_FILE_PATH}/cert_public.key
+    SHA256_CERT=$(sha256sum ${DEF_SIGN_FILE_PATH}/cert_public.key | awk '{print $1}')
+    
+    if [[ "$SHA256_PRIV_KEY" == "$SHA256_CERT" ]]; then
+        return 0
+    else
+        echo "The certificate and private key do NOT match (public key differs)."
+        exit 1
+    fi
+}
+
+check_private_key(){
+		#check private key is encrypted or not          
+        first_line=$(head -n 1 "${PRIV_KEY_FILE}")
+        if [[ "$first_line" != *"ENCRYPTED PRIVATE KEY"* ]]; then
+                echo_red "Error , ${PRIV_KEY_PATH} format error , it is not "ENCRYPTED PRIVATE KEY"" 
+				echo "Please update the private key on  device "
+				exit 1
+				#openssl rsa -in "$PRIV_KEY_PATH" -out "$PRIV_KEY_PATH" -aes256 -passout pass:"$PASSPHRASE"
+		fi
+  
+        #check password for private key
+        verify_RSA_key_with_pw
+
+}
 usage_initrd() {
     echo "Usage:  atcc.sys-backup [OPTIONS]"
     echo "Options:"
@@ -638,7 +678,7 @@ else
                 exit 1
                 ;;
             -D|--deleteAll)                
-                update_cert remove
+                update_cert remove ${CERT_FILE}
                 [ -f "${PRIV_KEY_FILE}" ] && rm -rf "${PRIV_KEY_FILE}"
                 [ -f "${DEF_CERT_FILE_PATH}" ] && rm -rf "${DEF_CERT_FILE_PATH}"
                 [ -f "${CERT_LINK_FILE}" ] && rm -rf "${CERT_LINK_FILE}"
@@ -730,6 +770,7 @@ otherwise choose  [N] to import a specific private key and certificate:" create_
                 [Yy]|"")
 					echo "=====> start create default keys......"
                     [ -f "${DEF_SIGN_FILE_PATH}/${DEF_AESKEY}.sig" ] && rm -rf "${DEF_SIGN_FILE_PATH}/${DEF_AESKEY}.sig"
+                    [ -f "${CERT_LINK_FILE}" ] && update_cert remove ${CERT_FILE} 
                 	create_new_keys_and_cert
                     if [ ! -L "${CERT_LINK_FILE}" ] || [ ! -f "${PRIV_KEY_FILE}" ]; then
                     	echo_red "=====> "$"${CERT_LINK_FILE} and ""${PRIV_KEY_FILE} failed created"
@@ -740,15 +781,33 @@ otherwise choose  [N] to import a specific private key and certificate:" create_
 					fi                  
 					;;
 
-				[Nn]* )
-                    
+				[Nn]* )    
                     [ -f "${DEF_SIGN_FILE_PATH}/${DEF_AESKEY}.sig" ] && rm -rf "${DEF_SIGN_FILE_PATH}/${DEF_AESKEY}.sig"
-                    echo "Please enter the private key path : "
-					read CUSTOMER_PRIV_KEY
-                    import_exist_private_key ${CUSTOMER_PRIV_KEY}
 
-                    echo "Please enter the certificate path : "
-                    read CUSTOMER_CERTIFICATE
+                    # firstly check usb has key pair  , otherwise import key pair
+                    if [ -f "$MOUNT_ABS_USB_PATH/${DEF_PRIV_KEY}" ] && [ -f "$MOUNT_ABS_USB_PATH/${DEF_CERT}" ]; then
+                        echo "Found private key and certificate on USB."
+                        read -p "Do you want to use the private key and certificate from ${ABS_USB}1 for backup? (y/n)" use_usb_key
+                        if [[ "${use_usb_key}" == "y" || "${use_usb_key}" == "Y" ]]; then
+                            CUSTOMER_PRIV_KEY="$MOUNT_ABS_USB_PATH/${DEF_PRIV_KEY}"
+                            CUSTOMER_CERTIFICATE="$MOUNT_ABS_USB_PATH/${DEF_CERT}"
+                        fi
+                    else
+                        echo "Please enter the private key path : "
+					    read CUSTOMER_PRIV_KEY
+                        [ ! -f "${CUSTOMER_PRIV_KEY}" ] && { echo_red "the path $CUSTOMER_PRIV_KEY  is invalid ." ; exit 1 ;}                    
+
+                        echo "Please enter the certificate path : "
+                        read CUSTOMER_CERTIFICATE
+                        [ ! -f "${CUSTOMER_CERTIFICATE}" ] && { echo_red "the path ${CUSTOMER_CERTIFICATE} is invalid ." ; exit 1 ;}
+                    fi
+
+                    check_private_key
+ 
+                    verify_with_module $CUSTOMER_PRIV_KEY $CUSTOMER_CERTIFICATE
+                    verify_with_pubkey $CUSTOMER_PRIV_KEY $CUSTOMER_CERTIFICATE    
+                     
+                    import_exist_private_key ${CUSTOMER_PRIV_KEY}
                     import_exist_cert  ${CUSTOMER_CERTIFICATE}
 					NEW_KEY="YES"
 					echo "File saved successfully"
@@ -760,78 +819,7 @@ otherwise choose  [N] to import a specific private key and certificate:" create_
                 ;;
                 esac
 		fi
-		if [ -z ${NEW_KEY} ] && [  -f ${PRIV_KEY_FILE} ] && [ -L ${CERT_LINK_FILE} ]; then
-               # read -p "The private key and certificate used for backup already exists at: ${DEF_SIGN_FILE_PATH} . Do you want to replace it [Y/N]? If you select [Y], you need to enter the path of the new files to update the backup private key and certificate:" update_priv_crt
-                read -p "The private key and certificate used for backup already exists in device . Do you want to replace it [Y/N]?" update_priv_crt
-		        case "$update_priv_crt" in
-               	    [Yy]| "" )
-                        [ -f "${DEF_SIGN_FILE_PATH}/${DEF_AESKEY}.sig" ] && rm -rf "${DEF_SIGN_FILE_PATH}/${DEF_AESKEY}.sig"
-                        # Show options for key pair modifications
-                        echo "Followed by:"
-                        echo "Select an option:"
-                        echo "1) Enter the path of the backup private key and certificate to update them."
-                        echo "2) Change the password for the backup private key."
-                        echo "3) Generate a new certificate and a backup private key with password."    
-                        read -p "Please enter your choice (1/2/3): " choice
-                        case $choice in
-                            1)
-                                # Option 1: Ask for the existing key path
-                                echo "Please enter the PRIVATE KEY path : "
-                                read CUSTOMER_PRIV_KEY
-                                import_exist_private_key ${CUSTOMER_PRIV_KEY}
-
-                                echo "Please enter the certificate path : "
-                                read CUSTOMER_CERTIFICATE
-                                import_exist_cert  ${CUSTOMER_CERTIFICATE}
-
-                                if [  -f ${PRIV_KEY_FILE} ] && [ -L ${CERT_LINK_FILE} ]; then
-                                    echo "key and certificate updated successfully"
-                                else
-                                    echo "Error: The specified key path does not exist."
-                                fi
-                                ;;   
-                            
-                            2) 
-                                # Option 2: change password
-                                change_pw
-                                ;;                                
-                            3)
-                                #Option 3: Generate a new key pair
-                                echo "=====> create keys...."
-                                create_new_keys_and_cert                                
-                                if [ ! -L "${CERT_LINK_FILE}" ] || [ ! -f "${PRIV_KEY_FILE}" ]; then
-                                    echo_red "=====> "${PRIV_KEY_FILE}" and "$CERT_LINK_FILE" failed created"
-                                    exit 1
-                                else
-                                    echo_yellow "=====> "${PRIV_KEY_FILE}" and "$CERT_LINK_FILE" successfully updated "                                    
-                                fi
-                                ;;                                            
-                              *)
-                                 echo "invalid choice"
-                                 exit 1
-                                ;;  
-                           esac
-                            ;;
-			        [Nn]* )
-		                echo "use default key from ${PRIV_KEY_FILE}"
-                        verify_RSA_key
-						;;
-        	        * )
-                	    echo "invalid choice"
-                        echo "use default key from ${PRIV_KEY_FILE} "
-                		;;
-                esac				
-		fi  #if key exist 
 		
-		#check private key is encrypted or not          
-        first_line=$(head -n 1 "${PRIV_KEY_FILE}")
-        if [[ "$first_line" != *"ENCRYPTED PRIVATE KEY"* ]]; then
-                echo_red "Error , ${PRIV_KEY_PATH} format error , it is not "ENCRYPTED PRIVATE KEY"" 
-				echo "Please update the private key on  device "
-				exit 1
-				#openssl rsa -in "$PRIV_KEY_PATH" -out "$PRIV_KEY_PATH" -aes256 -passout pass:"$PASSPHRASE"
-		fi  
-
         # Inform the user about the backup operation
         echo_yellow "Please note that the backup file will NOT contain the private key or any authentication-related data by default."
 
