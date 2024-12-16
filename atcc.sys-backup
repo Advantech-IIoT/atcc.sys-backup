@@ -329,10 +329,10 @@ function format_usb_device() {
 			exit 1
 		fi		
 		sleep 1
-        fi
-        
+        fi        
+}
 
-verify_with_module() {
+function verify_with_module() {
     #$1 : private key .
     #$2 : certificate   
     key_modulus=$(openssl rsa -in "$1" -noout -modulus | sed 's/Modulus=//')
@@ -346,7 +346,7 @@ verify_with_module() {
     fi
 }
 
-verify_with_pubkey() {
+function verify_with_pubkey() {
     #$1 : private key .
     #$2 : certificate 
    
@@ -364,7 +364,7 @@ verify_with_pubkey() {
     fi
 }
 
-check_private_key(){
+function check_private_key() {
 		#check private key is encrypted or not          
         first_line=$(head -n 1 "${PRIV_KEY_FILE}")
         if [[ "$first_line" != *"ENCRYPTED PRIVATE KEY"* ]]; then
@@ -530,47 +530,47 @@ if [ ! -z "${BOOT_INITRD}" ] && [ "${BOOT_INITRD}" = "in_process" ] ; then
 				do_reboot				
 				exit 1
 			fi
-		echo "partition done"
-		if [ -x /usr/sbin/partprobe ]; then
-			/usr/sbin/partprobe ${ABS_USB} > /dev/null
-		else
-			sleep 1
-			echo "partprobe not found, ignore"
-		fi
+		    echo "partition done"
+		    if [ -x /usr/sbin/partprobe ]; then
+			    /usr/sbin/partprobe ${ABS_USB} > /dev/null
+		    else
+			    sleep 1
+			    echo "partprobe not found, ignore"
+		    fi
 
-		# check partition exist and timout is 5 seconds
-		NEXT_WAIT_TIME=0
-		until [ $NEXT_WAIT_TIME -eq 5 ]; do
-			sleep 1
-			if [ -b ${ABS_USB}1 ] ; then
-				break
-			fi
-			$(( NEXT_WAIT_TIME++ ))
-		done
-		if [ $NEXT_WAIT_TIME -gt 5 ]; then
-			echo "Error! partition not exist"
-			exit 1
-		fi
+		    # check partition exist and timout is 5 seconds
+		    NEXT_WAIT_TIME=0
+		    until [ $NEXT_WAIT_TIME -eq 5 ]; do
+			    sleep 1
+			    if [ -b ${ABS_USB}1 ] ; then
+				    break
+			    fi
+			    $(( NEXT_WAIT_TIME++ ))
+		    done
+		    if [ $NEXT_WAIT_TIME -gt 5 ]; then
+			    echo "Error! partition not exist"
+			    exit 1
+		    fi
 
-		##umount ${ABS_USB}1  1>/dev/null 2>&1
-		mkfs.ext4 -F -q  ${ABS_USB}1 1>/dev/null 2>&1
-		RETURN_CODE=$?
-		if [ $RETURN_CODE -ne 0 ]; then
-			echo "Error! mkfs.ext4  ${ABS_USB}1 failed"  
+		    ##umount ${ABS_USB}1  1>/dev/null 2>&1
+		    mkfs.ext4 -F -q  ${ABS_USB}1 1>/dev/null 2>&1
+		    RETURN_CODE=$?
+		    if [ $RETURN_CODE -ne 0 ]; then
+			    echo "Error! mkfs.ext4  ${ABS_USB}1 failed"  
+                /usr/bin/atcc.sys-backup-msg FAILURE
+                do_reboot
+			    exit 1
+		    fi
+
+            e2fsck -p  ${ABS_USB}1      1>/dev/null 2>&1
+		    RETURN_CODE=$?
+		    if [ $RETURN_CODE -gt 4 ]; then
+			    echo "Error! e2fsck ${ABS_USB}1  failed:$RETURN_CODE" 
                         /usr/bin/atcc.sys-backup-msg FAILURE
                         do_reboot
-			exit 1
-		fi
-
-        e2fsck -p  ${ABS_USB}1      1>/dev/null 2>&1
-		RETURN_CODE=$?
-		if [ $RETURN_CODE -gt 4 ]; then
-			echo "Error! e2fsck ${ABS_USB}1  failed:$RETURN_CODE" 
-                        /usr/bin/atcc.sys-backup-msg FAILURE
-                        do_reboot
-			exit 1
-		fi		
-		sleep 1
+			    exit 1
+		    fi		
+		    sleep 1
         fi
         
 		[[  -e ${ABS_DIR_USB} ]] && rm -rf $ABS_DIR_USB  1>/dev/null 2>&1	
