@@ -243,9 +243,7 @@ function change_pw(){
     else
         update_cert add ${CERT_FILE}
         echo "update certificate done"
-    fi
-
-    
+   fi
     
 }
 
@@ -370,7 +368,7 @@ check_private_key(){
 		#check private key is encrypted or not          
         first_line=$(head -n 1 "${PRIV_KEY_FILE}")
         if [[ "$first_line" != *"ENCRYPTED PRIVATE KEY"* ]]; then
-                echo_red "Error , ${PRIV_KEY_PATH} format error , it is not "ENCRYPTED PRIVATE KEY"" 
+                echo_red "Error , ${PRIV_KEY_PATH} format error." 
 				echo "Please update the private key on  device "
 				exit 1
 				#openssl rsa -in "$PRIV_KEY_PATH" -out "$PRIV_KEY_PATH" -aes256 -passout pass:"$PASSPHRASE"
@@ -801,7 +799,8 @@ otherwise choose  [N] to import a specific private key and certificate:" create_
                         read CUSTOMER_CERTIFICATE
                         [ ! -f "${CUSTOMER_CERTIFICATE}" ] && { echo_red "the path ${CUSTOMER_CERTIFICATE} is invalid ." ; exit 1 ;}
                     fi
-
+                    read -p "Please enter the passphrase again" pw_usb
+                    PASSPHRASE=${pw_usb} 
                     check_private_key
  
                     verify_with_module $CUSTOMER_PRIV_KEY $CUSTOMER_CERTIFICATE
