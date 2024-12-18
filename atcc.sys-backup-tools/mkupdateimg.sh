@@ -72,7 +72,7 @@ if [ $# -lt 1  ]; then
     exit 1
 fi
 
-while getopts ":d:r:c:k:p:" opt; do
+while getopts ":d:r:c:k:p:e:" opt; do
   case $opt in    
     d)
       ROOTFS_EXT4_IMAGE="$OPTARG"
@@ -135,21 +135,31 @@ fi
 [ ! -e "sw-description" ] && echo "sw-description is missing" && exit 1
 FILES=" "
 
+[ ! -d ${EMMC_DIR_KERNEL} ] && mkdir -p ${EMMC_DIR_KERNEL}
+mount ${EMMC_NODE}p1 ${EMMC_DIR_KERNEL}  1>/dev/null 2>&1
+
 #modify swupdate version
 if [ -a "$EMMC_DIR_ROOTFS/etc/os-release" ]; then
     ORI_VERSION=$(cat $EMMC_DIR_ROOTFS/etc/os-release | grep IMAGE_VERSION |awk -F '"' '{print $2}' |awk -F '-' '{print $NF}' | sed 's/^.//')   
     [ ! -z $SIGN_IMAGE ] && BK_STR="_backup"
-    sed -i "/version = /s/\"\([0-9]\.[0-9]\.[0-9]\"\)/\"${ORI_VERSION}+${TIMESTAMP}${BK_STR}\"/g" sw-description
-    sed -i "/version = /s/\"\([0-9]\.[0-9]\"\)/\"${ORI_VERSION}+${TIMESTAMP}${BK_STR}\"/g" sw-description
+    # check system mode
+    
+    if [  -f ${EMMC_DIR_KERNEL}/EFI/BOOT/bootaa64.efi  ] && [ -f ${EMMC_DIR_KERNEL}/EFI/BOOT/grub.cfg ]; then
+        echo "Note:The EFI mode"
+        echo "Note:The backup system has EFI files."  >> ${LOG_FILE}
+        UEFI_STR="_uefi"            
+    else
+        echo "${EMMC_DIR_KERNEL}/EFI/BOOT/bootaa64.efi not exist"
+        echo "${EMMC_DIR_KERNEL}/EFI/BOOT/grub.cfg not exist"
+        ls -al ${EMMC_DIR_KERNEL}
+    fi
+
+    sed -i "/version = /s/\"\([0-9]\.[0-9]\.[0-9]\"\)/\"${ORI_VERSION}+${TIMESTAMP}${BK_STR}${UEFI_STR}\"/g" sw-description
+    sed -i "/version = /s/\"\([0-9]\.[0-9]\"\)/\"${ORI_VERSION}+${TIMESTAMP}${BK_STR}${UEFI_STR}\"/g" sw-description
 fi
 
 if [ ! -z $SIGN_IMAGE ] ;then
     FILES="${FILES} sw-description.sig"
-fi
-#find DTB_IMAGE
-if [ ! -d ${EMMC_DIR_KERNEL} ]; then 
-	mkdir -p ${EMMC_DIR_KERNEL}
-	mount ${EMMC_NODE}p1 ${EMMC_DIR_KERNEL}  1>/dev/null 2>&1
 fi
 
 if [ -e "$ROOTFS_EXT4_IMAGE" ];then
@@ -186,6 +196,7 @@ if [ ! -e $KERNEL_IMAGE ]; then
         FILES="${FILES} ${KERNEL_IMAGE}${ENC_IMAGE} ${KERNEL_IMAGE_SHA256}${ENC_IMAGE}"
 fi
 
+#find DTB_IMAGE
 if [ ! -e $DTB_IMAGE ]; then
         cp -rf ${EMMC_DIR_KERNEL}/*.dtb .
         encrypt_file "${DTB_IMAGE}"
@@ -196,7 +207,7 @@ fi
 echo "sw-description is as below:"
 cat $SW_CONFIG
 #description should be the first of the list
-ls $SW_CONFIG | cpio -ov -H crc > ../${PRODUCT_NAME}_${CONTAINER_VER}.swu
+ls $SW_CONFIG | cpio -ov -H crc > ../${PRODUCT_NAME}${UEFI_STR}_${CONTAINER_VER}.swu
 
 
 echo "sign swu file :$(date '+%Y-%m-%d %H:%M:%S')" >> ${LOG_FILE}
@@ -209,10 +220,10 @@ fi
 echo "[update file list: [$FILES] into swu file  $(date '+%Y-%m-%d %H:%M:%S') ]"  >> $LOG_FILE
 for i in $FILES;
 do
-       echo $i;done |cpio -Aov -H crc -F  ../${PRODUCT_NAME}_${CONTAINER_VER}.swu
+       echo $i;done |cpio -Aov -H crc -F  ../${PRODUCT_NAME}${UEFI_STR}_${CONTAINER_VER}.swu
 
 
-if [  -e ../${PRODUCT_NAME}_${CONTAINER_VER}.swu ]; then 
+if [  -e ../${PRODUCT_NAME}${UEFI_STR}_${CONTAINER_VER}.swu ]; then 
 	# copy cetificate and aes_key 
     [ ! -z $SIGN_IMAGE ] && cp -rf $CRT_PATH ${AES_FILE}.sig ../
     echo "[Backup file success]"   >> $LOG_FILE

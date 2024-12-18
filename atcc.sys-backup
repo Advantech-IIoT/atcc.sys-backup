@@ -69,20 +69,21 @@ function echo_red() {
 function echo_yellow() {
     printf $yellow
     echo  "$1"
-    printf $reset_color
+    printf "$reset_color"
 }
 
 function boot_device(){
-    boot_from_mmcblk1=`cat /proc/cmdline | grep "root=/dev/mmcblk1"`
+    boot_from_mmcblk1=$(cat /proc/cmdline | grep "root=/dev/mmcblk1")
     #sd-card boot
-    if [ "$boot_from_mmcblk1" != "" ];then
-        echo_red "please boot from EMMC , then try "atcc.sys-backup"  again"
+    if [ "$boot_from_mmcblk1" != "" ]; then
+        echo_red "please boot from EMMC , then try \"atcc.sys-backup\" again"
         exit 1;
     fi
 }
 
 function do_wait_key_event {
-	read -t 10 -p "OH!there is something wrong .Please press any key or wait ten seconds to reboot "	
+    #-r: This option prevents read from interpreting backslashes as escape characters.
+    read -r -t 10 -p "OH! There is something wrong. Please press any key or wait ten seconds to reboot "
 	/usr/bin/atcc.sys-backup-msg FAILURE_DONE
 	echo "Unexpected reboot"  >> $LOG_FILE
 }
@@ -96,9 +97,9 @@ function do_clean {
     else
         echo "[no Backup backup tools exist] "  
     fi
-	if [ ! -z ${SIGN_IMAGE} ]; then
-		[ -f $PRIV_KEY_FILE ] && rm -rf $PRIV_KEY_FILE && echo "remove $PRIV_KEY_FILE"
-	    [ -f $CERT_FILE ] && rm -rf $CERT_FILE &&  echo "remove $CERT_FILE"
+	if [ ! -z "${SIGN_IMAGE}" ]; then
+		[ -f "$PRIV_KEY_FILE" ] && rm -rf "$PRIV_KEY_FILE" && echo "remove \"$PRIV_KEY_FILE\" "
+	    [ -f "$CERT_FILE" ] && rm -rf "$CERT_FILE" &&  echo "remove \"$CERT_FILE\" "
 		echo "[Backup delete backup keys ]"
 	fi
 	sync
@@ -121,7 +122,7 @@ function do_reboot {
 }
 
 function backup_genkey {
-    [ ! -d $DEF_CERT_FILE_PATH ] && mkdir -p ${DEF_CERT_FILE_PATH}
+    [ ! -d "${DEF_CERT_FILE_PATH}" ] && mkdir -p "${DEF_CERT_FILE_PATH}"
     [ -f ${DEF_CERT_FILE_PATH}/${DEF_X509_CONFIG} ] && { echo "old config exist" ; rm -rf ${DEF_CERT_FILE_PATH}/${DEF_X509_CONFIG}; }
 	cat >${DEF_CERT_FILE_PATH}/${DEF_X509_CONFIG} << EOF
 [ req ]
@@ -162,20 +163,21 @@ function create_new_keys_and_cert() {
 }
 
 function update_cert() {    
-    CERT=$1
-    if [ "$2" = "remove" ]; then        
+   CERT=$2
+    if [ "$1" = "remove" ]; then
         find "${CERT_LINK_PATH}" -type l -exec bash -c '
             for symlink; do
             if [ "$(readlink -f "${symlink}")" = "$0" ]; then
-                rm "${ABS_EXT4_OUT_DIR}/${symlink}"                
+                rm -rf "${symlink}"           
+				rm -rf "$(readlink -f "${symlink}")"
             fi
             done
         ' "${CERT}" {} +
 
-        [ -f ${CERT} ] && rm -rf ${CERT}    
+        [ -f ${CERT_FILE} ] && rm -rf ${CERT_FILE}
     fi
 
-    if [ "$2" = "add" ]; then
+   if [ "$1" = "add" ]; then
         if [ ! -f ${CERT} ]; then
             echo_red "${CERT} not exist !!!!!"
         fi
@@ -219,7 +221,7 @@ function import_aes_key() {
 function delete_all_keys(){
 
     [ -f "${PRIV_KEY_FILE}" ] && rm -rf "${PRIV_KEY_FILE}"
-    [ -f  ${CERT_FILE} ] && update_cert remove ${CERT_LINK_FILE} && rm -rf ${CERT_FILE}
+    [ -f  ${CERT_FILE} ] && update_cert remove ${CERT_FILE} && rm -rf ${CERT_FILE}
     [ -f "${DEF_SIGN_FILE_PATH}/${DEF_AESKEY}.sig" ] && rm -rf "${DEF_SIGN_FILE_PATH}/${DEF_AESKEY}.sig"
     [ -f "${DEF_SIGN_FILE_PATH}/${DEF_CERT}" ] && rm -rf "${DEF_SIGN_FILE_PATH}/${DEF_CERT}"
     #echo "remove default keys and certificate in device done"
@@ -771,9 +773,7 @@ otherwise choose  [N] to import a specific private key and certificate:" create_
  		    case "$create_default_key" in
                 [Yy]|"")
 					echo "=====> start create default keys......"
-                    [ -f "${DEF_SIGN_FILE_PATH}/${DEF_AESKEY}.sig" ] && rm -rf "${DEF_SIGN_FILE_PATH}/${DEF_AESKEY}.sig"
-                    [ -f "${CERT_LINK_FILE}" ] && update_cert remove ${CERT_FILE} 
-                	create_new_keys_and_cert
+                    create_new_keys_and_cert
                     if [ ! -L "${CERT_LINK_FILE}" ] || [ ! -f "${PRIV_KEY_FILE}" ]; then
                     	echo_red "=====> "$"${CERT_LINK_FILE} and ""${PRIV_KEY_FILE} failed created"
                         exit 1
