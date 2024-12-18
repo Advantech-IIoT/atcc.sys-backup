@@ -151,9 +151,8 @@ EOF
 
 function create_new_keys_and_cert() {
 
+    delete_all_keys
     [ ! -d ${DEF_CERT_FILE_PATH} ] &&  mkdir -p  "${DEF_CERT_FILE_PATH}"
-    [ -f  ${PRIV_KEY_FILE} ] && rm -rf ${PRIV_KEY_FILE}
-    [ -f  ${CERT_FILE} ] && rm -rf ${CERT_FILE}
  
     #create x509_backup.genkey
     backup_genkey
@@ -165,7 +164,7 @@ function create_new_keys_and_cert() {
 function update_cert() {    
     CERT=$1
     if [ "$2" = "remove" ]; then        
-        find "/etc/ssl/certs" -type l -exec bash -c '
+        find "${CERT_LINK_PATH}" -type l -exec bash -c '
             for symlink; do
             if [ "$(readlink -f "${symlink}")" = "$0" ]; then
                 rm "${ABS_EXT4_OUT_DIR}/${symlink}"                
@@ -217,11 +216,18 @@ function import_aes_key() {
     cp -rf "$1" "${DEF_SIGN_FILE_PATH}/${DEF_AESKEY}.sig"
 }
 
+function delete_all_keys(){
 
+    [ -f "${PRIV_KEY_FILE}" ] && rm -rf "${PRIV_KEY_FILE}"
+    [ -f  ${CERT_FILE} ] && update_cert remove ${CERT_LINK_FILE} && rm -rf ${CERT_FILE}
+    [ -f "${DEF_SIGN_FILE_PATH}/${DEF_AESKEY}.sig" ] && rm -rf "${DEF_SIGN_FILE_PATH}/${DEF_AESKEY}.sig"
+    [ -f "${DEF_SIGN_FILE_PATH}/${DEF_CERT}" ] && rm -rf "${DEF_SIGN_FILE_PATH}/${DEF_CERT}"
+    #echo "remove default keys and certificate in device done"
+}
 function change_pw(){
     
     echo "verify current passphrase..."
-    verify_RSA_key
+    verify_RSA_key_with_pw $PRIV_KEY_FILE $PASSPHRASE
 
     echo "change passphrase..."    
     read -p "input new passphrase:" NEW_PWD
@@ -248,17 +254,18 @@ function change_pw(){
 }
 
 function verify_RSA_key_with_pw() {
-
+    #$1 : private key   
+    #$2 : phassword
     # private key has be encrypted , check password then ask user for check password?
-    if openssl rsa -in "$PRIV_KEY_FILE" -check -passin pass:"$PASSPHRASE" -noout 2>/dev/null; then
+    if openssl rsa -in "$1" -check -passin pass:"$2" -noout 2>/dev/null; then
         echo "Verify RSA key is confirmed"
     else
         echo "wrong passphrase!! Could not read private key "
         read -p  "input passphrase again:" PRIV_PWD
-            if openssl rsa -in "$PRIV_KEY_FILE" -check -noout -passin pass:${PRIV_PWD} 2>/dev/null; then
+            if openssl rsa -in "$1" -check -noout -passin pass:${PRIV_PWD} 2>/dev/null; then
                 PASSPHRASE=$PRIV_PWD
             else
-                echo "wrong passphrase !!!Could not read private key from $PRIV_KEY_FILE"
+                echo "wrong passphrase !!!Could not read private key from $1"
                 exit 1
             fi
    fi
@@ -335,9 +342,8 @@ function format_usb_device() {
 function verify_with_module() {
     #$1 : private key .
     #$2 : certificate   
-    key_modulus=$(openssl rsa -in "$1" -noout -modulus | sed 's/Modulus=//')
-    cert_modulus=$(openssl x509 -in "$2" -noout -modulus | sed 's/Modulus=//')
-
+    key_modulus=$(openssl rsa -modulus -noout -in $1  -passin pass:$PASSPHRASE | openssl md5 | awk -F"= " '{print $2}')
+    cert_modulus=$(openssl x509 -modulus -noout -in $2 -passin pass:$PASSPHRASE | openssl md5 | awk -F"= " '{print $2}' )
     if [[ "$cert_modulus" == "$key_modulus" ]]; then
         return 0
     else
@@ -349,13 +355,18 @@ function verify_with_module() {
 function verify_with_pubkey() {
     #$1 : private key .
     #$2 : certificate 
-   
-    openssl rsa -in $1 -pubout -noout > ${DEF_SIGN_FILE_PATH}/private_public.key  
+    P_KEY=$1 
+    C_CRT=$2
+
+    [ ! -d ${DEF_SIGN_FILE_PATH} ] && mkdir -p ${DEF_SIGN_FILE_PATH}
+    openssl rsa -in $P_KEY  -pubout -out  ${DEF_SIGN_FILE_PATH}/private_public.key  -passin pass:$PASSPHRASE    
     SHA256_PRIV_KEY=$(sha256sum ${DEF_SIGN_FILE_PATH}/private_public.key | awk '{print $1}')
 
-    openssl x509 -in $1 -pubkey -noout > ${DEF_SIGN_FILE_PATH}/cert_public.key
+    openssl x509 -in $C_CRT -pubkey  -noout > ${DEF_SIGN_FILE_PATH}/cert_public.key 
     SHA256_CERT=$(sha256sum ${DEF_SIGN_FILE_PATH}/cert_public.key | awk '{print $1}')
-    
+
+    rm -rf ${DEF_SIGN_FILE_PATH}/private_public.key ${DEF_SIGN_FILE_PATH}/cert_public.key  
+
     if [[ "$SHA256_PRIV_KEY" == "$SHA256_CERT" ]]; then
         return 0
     else
@@ -366,18 +377,21 @@ function verify_with_pubkey() {
 
 function check_private_key() {
 		#check private key is encrypted or not          
-        first_line=$(head -n 1 "${PRIV_KEY_FILE}")
+        first_line=$(head -n 1 "$1")
         if [[ "$first_line" != *"ENCRYPTED PRIVATE KEY"* ]]; then
-                echo_red "Error , ${PRIV_KEY_PATH} format error." 
+                echo_red "Error , $1 format error." 
 				echo "Please update the private key on  device "
 				exit 1
 				#openssl rsa -in "$PRIV_KEY_PATH" -out "$PRIV_KEY_PATH" -aes256 -passout pass:"$PASSPHRASE"
 		fi
   
         #check password for private key
-        verify_RSA_key_with_pw
+        verify_RSA_key_with_pw $1 $2
 
 }
+
+
+
 usage_initrd() {
     echo "Usage:  atcc.sys-backup [OPTIONS]"
     echo "Options:"
@@ -676,11 +690,7 @@ else
                 exit 1
                 ;;
             -D|--deleteAll)                
-                update_cert remove ${CERT_FILE}
-                [ -f "${PRIV_KEY_FILE}" ] && rm -rf "${PRIV_KEY_FILE}"
-                [ -f "${DEF_CERT_FILE_PATH}" ] && rm -rf "${DEF_CERT_FILE_PATH}"
-                [ -f "${CERT_LINK_FILE}" ] && rm -rf "${CERT_LINK_FILE}"
-                [ -f "${DEF_SIGN_FILE_PATH}/${DEF_AESKEY}.sig" ] && rm -rf "${DEF_SIGN_FILE_PATH}/${DEF_AESKEY}.sig"    
+                delete_all_keys 
                 echo "remove default keys in device done"
                 exit 1 
                 ;;
@@ -751,12 +761,6 @@ If you select [N], erase and format this USB, and then perform system backup(Y/N
                 ;;
         esac
 	fi
-    #echo "[Backup] Start backup current system to $ABS_USB"
-    echo_red "[Warning] All data on $ABS_USB now will be destroyed! Continue? [y/n] "
-    read ans
-    if [ "$ans" != "y" ] && [ "$ans" != "Y" ] &&  [ "$ans" != "" ]; then
-        exit 1
-    fi
 
 	#add for secure 
 	if [ ! -z $SIGN_IMAGE ]; then 
@@ -786,10 +790,10 @@ otherwise choose  [N] to import a specific private key and certificate:" create_
                     if [ -f "$MOUNT_ABS_USB_PATH/${DEF_PRIV_KEY}" ] && [ -f "$MOUNT_ABS_USB_PATH/${DEF_CERT}" ]; then
                         echo "Found private key and certificate on USB."
                         read -p "Do you want to use the private key and certificate from ${ABS_USB}1 for backup? (y/n)" use_usb_key
-                        if [[ "${use_usb_key}" == "y" || "${use_usb_key}" == "Y" ]]; then
-                            CUSTOMER_PRIV_KEY="$MOUNT_ABS_USB_PATH/${DEF_PRIV_KEY}"
-                            CUSTOMER_CERTIFICATE="$MOUNT_ABS_USB_PATH/${DEF_CERT}"
-                        fi
+                    fi
+                    if [[ "${use_usb_key}" == "y" || "${use_usb_key}" == "Y" ]]; then
+                        CUSTOMER_PRIV_KEY="$MOUNT_ABS_USB_PATH/${DEF_PRIV_KEY}"
+                        CUSTOMER_CERTIFICATE="$MOUNT_ABS_USB_PATH/${DEF_CERT}"                    
                     else
                         echo "Please enter the private key path : "
 					    read CUSTOMER_PRIV_KEY
@@ -799,9 +803,6 @@ otherwise choose  [N] to import a specific private key and certificate:" create_
                         read CUSTOMER_CERTIFICATE
                         [ ! -f "${CUSTOMER_CERTIFICATE}" ] && { echo_red "the path ${CUSTOMER_CERTIFICATE} is invalid ." ; exit 1 ;}
                     fi
-                    read -p "Please enter the passphrase again" pw_usb
-                    PASSPHRASE=${pw_usb} 
-                    check_private_key
  
                     verify_with_module $CUSTOMER_PRIV_KEY $CUSTOMER_CERTIFICATE
                     verify_with_pubkey $CUSTOMER_PRIV_KEY $CUSTOMER_CERTIFICATE    
@@ -820,11 +821,16 @@ otherwise choose  [N] to import a specific private key and certificate:" create_
 		fi
 		
         # Inform the user about the backup operation
-        echo_yellow "Please note that the backup file will NOT contain the private key or any authentication-related data by default."
+        echo_yellow "Please note that, by default, the backup file will not include the private key or any authentication-related information."
+        echo_yellow "Ensure that you securely store your private key and certificate to avoid any loss of access."
 
         # Prompt the user about backing up private keys separately
-        echo "Now ,we back up the private key to the USB drive. This private key is for backup purposes only."        
+        echo_yellow "Now ,we back up the private key to the USB drive. This private key is for backup purposes only."        
         backup_key="y" 
+        
+    
+
+        
 
         MOUNT_USERDATA_PATH=`mount | grep ${EMMC_NODE}p4 | awk -F ' ' '{print $3}' | awk 'NR==1'`
         if [ -z ${MOUNT_USERDATA_PATH} ] ; then             
@@ -840,6 +846,14 @@ otherwise choose  [N] to import a specific private key and certificate:" create_
         [ -f ${MOUNT_USERDATA_PATH}/${DEF_CERT} ] && rm -rf ${MOUNT_USERDATA_PATH}/${DEF_CERT}
 		cp -rfL ${CERT_LINK_FILE} ${MOUNT_USERDATA_PATH}/${DEF_CERT}
 	fi
+
+    echo_red "[Warning] All data on $ABS_USB now will be destroyed after rebootng the system ! Continue? [y/n] "
+    read ans
+    if [ "$ans" != "y" ] && [ "$ans" != "Y" ] &&  [ "$ans" != "" ]; then
+        delete_all_keys
+        exit 1
+    fi
+
 	
 	${SET_BACKUP_ENV_STATUS}${BACKUP_STATUS_IN_PROCESS}
 
@@ -865,7 +879,7 @@ otherwise choose  [N] to import a specific private key and certificate:" create_
             echo "reboot to grub-reboot ${ENTRY_BACKUP}"
             grub-reboot --boot-directory=${MOUNT_POINT} ${ENTRY_BACKUP}
         fi
-		echo "[Backup] reboot"
+		echo "Shutting down the system..."
 		/sbin/reboot 
 	fi
 fi
